@@ -611,6 +611,25 @@
   .rec-card .rs{flex:0 0 auto;font-family:var(--mono);font-size:9px;letter-spacing:.08em;
     padding:3px 8px;border-radius:999px;color:var(--dim);border:1px solid rgba(96,158,226,.18)}
   .rec-card .rs.done{color:var(--cyan);border-color:rgba(79,216,255,.3);background:rgba(79,216,255,.07)}
+  .rec-card .rec-del{
+    flex:0 0 auto;min-width:26px;height:26px;padding:0 6px;border-radius:8px;cursor:pointer;
+    display:inline-grid;place-items:center;font-size:15px;line-height:1;
+    color:var(--dim);background:transparent;border:1px solid transparent;
+    opacity:.5;transition:.16s;font-family:inherit;
+  }
+  .rec-card:hover .rec-del{opacity:1}
+  .rec-card .rec-del:hover{color:#ff8b98;border-color:rgba(255,90,110,.4);background:rgba(255,90,110,.1)}
+  .rec-card .rec-del.arm{
+    opacity:1;font-size:10px;letter-spacing:.06em;color:#ff8b98;
+    border-color:rgba(255,90,110,.55);background:rgba(255,90,110,.16);
+  }
+  .f-item .f-del{
+    margin-left:auto;flex:0 0 auto;font-size:10px;font-family:var(--mono);letter-spacing:.06em;
+    padding:4px 8px;border-radius:7px;cursor:pointer;color:var(--dim);background:transparent;
+    border:1px solid transparent;transition:.16s;
+  }
+  .f-item .f-del:hover{color:#ff8b98;border-color:rgba(255,90,110,.4);background:rgba(255,90,110,.1)}
+  .f-item .f-del.arm{color:#ff8b98;border-color:rgba(255,90,110,.55);background:rgba(255,90,110,.16)}
 
   .sp-tool{
     display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:12px;
@@ -1124,7 +1143,7 @@
   <footer>
     <div class="privacy">
       <span data-ic="shield">音频与文字只存本机</span>
-      <span data-ic="clock">关掉页面即清空，不写盘</span>
+      <span data-ic="clock">录音不写盘，科目记录存本机</span>
       <span data-ic="mic">录音前会提醒你告知在场的人</span>
     </div>
     <button class="kill" id="killBtn">一键销毁本节课</button>
@@ -1154,7 +1173,7 @@
     <ul>
       <li><i>1</i><span>这节课会录到<b>老师和同学的声音</b>，请先确认在场的人知道。</span></li>
       <li><i>2</i><span>音频和文字<b>只存在这台设备</b>的浏览器里，不传服务器。</span></li>
-      <li><i>3</i><span>数据只在内存里，<b>关掉页面就没了</b>；也可以随时一键销毁。</span></li>
+      <li><i>3</i><span>录音和转写只在内存里，<b>关掉就没了</b>；科目记录（标题、关键词、错题）存在本机浏览器，可以逐条删除。</span></li>
     </ul>
     <label class="agree"><input type="checkbox" id="agree"> 我已告知在场的人，继续录音</label>
     <div class="sheet-actions">
@@ -2558,6 +2577,43 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
     }
   };
 
+  /* ---------- 科目记录的本地保存 ---------- */
+  /* 只存文字（标题、关键词、错题条），不存录音，也不存转写全文 */
+  var LS_SUBJ = 'ca.subj.v1';
+  function saveSubj(){
+    try{ localStorage.setItem(LS_SUBJ, JSON.stringify(SUBJ_DATA)); }catch(e){}
+  }
+  function loadSubj(){
+    try{
+      var raw = localStorage.getItem(LS_SUBJ);
+      if(!raw) return;
+      var d = JSON.parse(raw);
+      Object.keys(d).forEach(function(k){
+        if(!SUBJ_DATA[k] || !d[k]) return;
+        if(d[k].records) SUBJ_DATA[k].records = d[k].records;
+        if(d[k].wrong) SUBJ_DATA[k].wrong = d[k].wrong;
+      });
+    }catch(e){}
+  }
+  loadSubj();
+
+  /* 两步确认：第一次点变成「确认删除」，3 秒内再点才真删 */
+  function armDelete(btn, label, onConfirm){
+    if(btn.classList.contains('arm')){
+      onConfirm();
+      return;
+    }
+    btn.classList.add('arm');
+    btn.dataset.old = btn.textContent;
+    btn.textContent = label;
+    setTimeout(function(){
+      if(btn.isConnected){
+        btn.classList.remove('arm');
+        btn.textContent = btn.dataset.old || '×';
+      }
+    }, 3000);
+  }
+
   var WORDS = [
     { w:'abstract', pos:'n.', zh:'摘要；抽象的', ex:'Your abstract should be under 200 words.' },
     { w:'thesis', pos:'n.', zh:'论文；论点', ex:'The thesis of this paper is clear.' },
@@ -2600,14 +2656,15 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
     CUR_SUBJ = id;
     $('spCode').textContent = s.code;
     $('spName').textContent = s.name;
-    $('spRecords').innerHTML = s.records.map(function(r){
+    $('spRecords').innerHTML = s.records.length ? s.records.map(function(r, i){
       return '<div class="rec-card" data-rec="' + esc(r.t) + '">' +
         '<div class="rd">' + r.d + '<br>' + r.dur + '</div>' +
         '<div class="rb"><div class="rt">' + esc(r.t) + '</div>' +
         '<div class="rk">' + r.kw.map(function(k){ return '<span>' + esc(k) + '</span>'; }).join('') + '</div></div>' +
         '<span class="rs' + (r.done ? ' done' : '') + '">' + esc(r.st) + '</span>' +
+        '<button class="rec-del" data-del="' + i + '" title="删除这条记录" aria-label="删除">×</button>' +
       '</div>';
-    }).join('');
+    }).join('') : '<div class="st-empty" style="padding:26px 4px">还没有记录。录一节课，这里就会出现。</div>';
 
     $('spTools').innerHTML = s.tools.map(function(tid){
       var t = TOOLS[tid];
@@ -2639,6 +2696,20 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
     startRec();
   });
   $('subjPage').addEventListener('click', function(e){
+    var del = e.target.closest('[data-del]');
+    if(del){
+      e.stopPropagation();
+      var idx = +del.getAttribute('data-del');
+      armDelete(del, '确认删除', function(){
+        var rec = SUBJ_DATA[CUR_SUBJ].records[idx];
+        SUBJ_DATA[CUR_SUBJ].records.splice(idx, 1);
+        saveSubj();
+        searchItems = null;
+        openSubject(CUR_SUBJ);
+        toast('已删除「' + (rec ? rec.t : '这条记录') + '」');
+      });
+      return;
+    }
     var rec = e.target.closest('[data-rec]');
     if(rec){
       var title = rec.getAttribute('data-rec');
@@ -2753,11 +2824,29 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
   function buildWrong(body){
     var s = currentSubject();
     var list = s.wrong || [];
-    body.innerHTML = list.length ? list.map(function(w){
-      return '<div class="f-item"><div class="f-name">⚑ ' + esc(w.t) + '</div>' +
+    body.innerHTML = list.length ? list.map(function(w, i){
+      return '<div class="f-item"><div style="display:flex;align-items:flex-start;gap:10px">' +
+        '<div class="f-name" style="flex:1">⚑ ' + esc(w.t) + '</div>' +
+        '<button class="f-del" data-wdel="' + i + '">删除</button></div>' +
         '<div class="f-note" style="margin-top:6px">' + esc(w.x) + '</div></div>';
     }).join('') + '<div class="f-note" style="margin-top:12px">上课时点「打标」的地方，会自动归到这里。</div>'
       : '<div class="st-empty">还没有错题。上课打标后会自动出现。</div>';
+
+    if(!body.__wbound){
+      body.__wbound = true;
+      body.addEventListener('click', function(e){
+        var b = e.target.closest('[data-wdel]');
+        if(!b) return;
+        var i = +b.getAttribute('data-wdel');
+        armDelete(b, '确认？', function(){
+          var sub = currentSubject();
+          sub.wrong.splice(i, 1);
+          saveSubj();
+          buildWrong(body);
+          toast('已从错题本删除');
+        });
+      });
+    }
   }
 
   /* 代码纠错 */
@@ -3491,6 +3580,8 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
         s.wrong.unshift({ t: b.title + ' · ' + fmt(t), x: '上课打标：这里没听懂，待补' });
       });
     }
+    saveSubj();
+    searchItems = null;
     ST.subject = null;
   }
 
