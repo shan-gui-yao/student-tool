@@ -734,6 +734,13 @@
     text-align:right;font-family:var(--mono);font-size:11px;color:var(--dim);
     padding:6px 4px 12px;min-height:20px;
   }
+  .calc-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .calc-chip{
+    padding:6px 11px;border-radius:8px;cursor:pointer;font-family:var(--mono);font-size:12px;
+    color:#a9c3dd;background:rgba(79,216,255,.07);border:1px solid rgba(79,216,255,.18);transition:.15s;
+  }
+  .calc-chip:hover{color:var(--cyan);background:rgba(79,216,255,.16);border-color:rgba(79,216,255,.4)}
+  .calc-note{font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.85;margin-top:12px}
   .calc-pad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
   .calc-pad button{
     height:52px;border-radius:11px;font-family:var(--mono);font-size:17px;
@@ -744,7 +751,7 @@
   .calc-pad button:active{transform:scale(.96)}
   .calc-pad .op{color:var(--cyan)}
   .calc-pad .eq{
-    grid-column:span 2;background:linear-gradient(135deg,#7fe7ff,#3fc9f0);
+    grid-column:span 4;background:linear-gradient(135deg,#7fe7ff,#3fc9f0);
     color:#031018;font-weight:700;border:0;
   }
   .calc-pad .fn{color:var(--amber);font-size:14px}
@@ -2892,6 +2899,22 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
   $('toolModal').addEventListener('click', function(e){
     if(e.target === $('toolModal')) $('toolModal').classList.remove('open');
   });
+  /* 计算器支持物理键盘：数字、运算符、逗号、回车、退格 */
+  document.addEventListener('keydown', function(e){
+    if(!$('toolModal').classList.contains('open')) return;
+    if($('tsName').textContent !== '计算器') return;
+    if(e.ctrlKey || e.metaKey || e.altKey) return;
+    var k = e.key;
+    if(k && k.length === 1 && /[0-9.+\-*/()%^!,]/.test(k)){
+      e.preventDefault();
+      calcKey(k);
+      return;
+    }
+    if(k === 'Enter' || k === '='){ e.preventDefault(); calcKey('='); return; }
+    if(k === 'Backspace'){ e.preventDefault(); calcKey('DEL'); return; }
+    if(k === 'c' || k === 'C'){ e.preventDefault(); calcKey('C'); return; }
+  });
+
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
     if($('toolModal').classList.contains('open')){ $('toolModal').classList.remove('open'); return; }
@@ -2899,61 +2922,154 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
   });
 
   /* 计算器 */
-  var CALC = { expr:'', last:'', cur:null };
+  /* ---------------- 计算器 ----------------
+     基础四则 + 各科目专属的快捷键；另外支持 ! C() P() gcd() mod() det2() det3()
+     和 sqrt/sin/cos/tan/log/ln/pi，够应付大部分随堂算数。 */
+  var CALC = { expr:'', last:'', cur:null, key:null };
+
+  var CALC_CHIPS = {
+    math: [['π','pi'], ['e','e'], ['√','sqrt('], ['x²','^2'], ['xʸ','^'], ['sin','sin('], ['ln','ln(']],
+    lina: [[',',','], ['det2','det2('], ['det3','det3('], ['√','sqrt('], ['x²','^2'], ['×','*']],
+    prob: [[',',','], ['C(n,k)','C('], ['P(n,k)','P('], ['n!','!'], ['x²','^2'], ['√','sqrt(']],
+    disc: [[',',','], ['C(n,k)','C('], ['n!','!'], ['gcd','gcd('], ['mod','mod(']],
+    phys: [['g 9.8','9.8'], ['k 9e9','9e9'], ['√','sqrt('], ['x²','^2'], ['xʸ','^']],
+    cs:   [[',',','], ['2^','2^'], ['mod','mod('], ['x²','^2'], ['<<','<<'], ['>>','>>']],
+    comp: [[',',','], ['2^','2^'], ['mod','mod(']],
+    eng:  []
+  };
+
+  function calcFact(n){
+    if(n < 0 || n !== Math.floor(n) || n > 170) return NaN;
+    var r = 1;
+    for(var i = 2; i <= n; i++) r *= i;
+    return r;
+  }
+  function calcComb(n, k){ return calcFact(n) / (calcFact(k) * calcFact(n - k)); }
+  function calcPerm(n, k){ return calcFact(n) / calcFact(n - k); }
+  function calcGcd(a, b){
+    a = Math.abs(a); b = Math.abs(b);
+    while(b){ var x = b; b = a % b; a = x; }
+    return a;
+  }
+  function calcMod(a, b){ return a % b; }
+  function calcDet2(a, b, c, d){ return a * d - b * c; }
+  function calcDet3(a, b, c, d, e, f, g, h, i){
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  }
+
   function buildCalc(body){
+    var key = currentSubjectKey();
+    var cur = SUBJ_DATA[key] || SUBJ_DATA.math;
+    CALC.cur = cur.name;
+    CALC.key = key;
+    var chips = CALC_CHIPS[key] || [];
+
     var keys = [
-      ['C','fn'], ['DEL','fn'], ['%','fn'], ['/','op'],
-      ['7',''], ['8',''], ['9',''], ['*','op'],
-      ['4',''], ['5',''], ['6',''], ['-','op'],
-      ['1',''], ['2',''], ['3',''], ['+','op'],
-      ['0',''], ['.',''], ['=','eq']
+      ['C','fn'], ['(','fn'], [')','fn'], ['DEL','fn'],
+      ['7',''], ['8',''], ['9',''], ['/','op'],
+      ['4',''], ['5',''], ['6',''], ['*','op'],
+      ['1',''], ['2',''], ['3',''], ['-','op'],
+      ['0',''], ['.',''], ['%','fn'], ['+','op'],
+      ['=','eq']
     ];
-    body.innerHTML = '<div class="calc-disp" id="calcDisp">0</div>' +
-      '<div class="calc-sub" id="calcSub">' + (CALC.cur ? '当前科目：' + esc(CALC.cur) : '') + '</div>' +
+
+    body.innerHTML =
+      '<div class="calc-disp" id="calcDisp">0</div>' +
+      '<div class="calc-sub" id="calcSub">' + esc(CALC.cur) + ' · 本课快捷键在下面</div>' +
+      (chips.length
+        ? '<div class="calc-chips">' + chips.map(function(c, i){
+            return '<button class="calc-chip" data-chip="' + i + '">' + esc(c[0]) + '</button>';
+          }).join('') + '</div>'
+        : '') +
       '<div class="calc-pad">' + keys.map(function(k){
         var label = k[0] === '*' ? '×' : k[0] === '/' ? '÷' : k[0] === '-' ? '−' : k[0] === 'DEL' ? '⌫' : k[0];
         var cls = k[1] === 'eq' ? 'eq' : k[1];
         return '<button class="' + cls + '" data-k="' + k[0] + '">' + label + '</button>';
-      }).join('') + '</div>';
+      }).join('') + '</div>' +
+      '<div class="calc-note">支持 n!  C(n,k)  P(n,k)  gcd(a,b)  mod(a,b)  det2(a,b,c,d)  det3(9 个数)' +
+      '· 直接用键盘输入也行' +
+      (key === 'cs' || key === 'comp' ? '<br>整数结果会自动附上十六进制和二进制' : '') + '</div>';
 
     $('calcDisp').textContent = CALC.expr || '0';
+
     body.querySelector('.calc-pad').addEventListener('click', function(e){
       var b = e.target.closest('[data-k]');
       if(!b) return;
       calcKey(b.getAttribute('data-k'));
     });
+    var chipBox = body.querySelector('.calc-chips');
+    if(chipBox){
+      chipBox.addEventListener('click', function(e){
+        var b = e.target.closest('[data-chip]');
+        if(!b) return;
+        calcKey(chips[+b.getAttribute('data-chip')][1]);
+      });
+    }
   }
+
   function calcKey(k){
     if(k === 'C'){ CALC.expr = ''; CALC.last = ''; }
     else if(k === 'DEL'){ CALC.expr = CALC.expr.slice(0, -1); }
     else if(k === '='){ calcEval(); }
-    else if(k === '='){ }
     else { CALC.expr += k; }
     var d = $('calcDisp'), s = $('calcSub');
     if(d) d.textContent = CALC.expr || '0';
-    if(s) s.textContent = CALC.last;
+    if(s) s.textContent = CALC.last || (CALC.cur ? CALC.cur + ' · 本课快捷键在下面' : '');
   }
+
   function calcEval(){
-    var raw = CALC.expr;
+    var raw = (CALC.expr || '').trim();
     if(!raw) return;
-    if(!/^[0-9+\-*/%.() ]+$/.test(raw)){ CALC.last = '只能算数字和 + − × ÷ %'; return; }
-    var safe = raw.replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
+
+    var safe = raw
+      .replace(/(\d+(?:\.\d+)?)%/g, '($1/100)')      /* 百分号 */
+      .replace(/(\d+(?:\.\d+)?)!/g, 'fact($1)')      /* 阶乘 */
+      .replace(/\bC\(/g, 'comb(')                     /* 组合数 */
+      .replace(/\bP\(/g, 'perm(')                     /* 排列数 */
+      .replace(/0x([0-9a-fA-F]+)/g, function(m, h){ return String(parseInt(h, 16)); })
+      .replace(/0b([01]+)/g, function(m, b){ return String(parseInt(b, 2)); })
+      .replace(/\bpi\b/g, 'Math.PI')
+      .replace(/\be\b/g, 'Math.E')
+      .replace(/\^/g, '**');
+
+    /* 只允许白名单里的名字和数字运算符 */
+    var stripped = safe.replace(
+      /Math\.(PI|E)|fact|comb|perm|gcd|mod|sqrt|sin|cos|tan|log|ln|abs|pow|det2|det3/g, ''
+    );
+    if(/[^0-9+\-*/().,%<>&| ]/.test(stripped)){
+      CALC.last = '这个式子里有不认识的符号';
+      return;
+    }
+
     try{
-      var v = Function('"use strict";return (' + safe + ')')();
+      var v = Function(
+        'fact','comb','perm','gcd','mod','sqrt','sin','cos','tan','log','ln','abs','pow','det2','det3',
+        '"use strict";return (' + safe + ');'
+      )(
+        calcFact, calcComb, calcPerm, calcGcd, calcMod,
+        Math.sqrt, Math.sin, Math.cos, Math.tan, Math.log10, Math.log, Math.abs, Math.pow,
+        calcDet2, calcDet3
+      );
       if(typeof v !== 'number' || !isFinite(v)) throw new Error('bad');
-      CALC.last = raw + ' =';
-      CALC.expr = String(Math.round(v * 1e10) / 1e10);
-    }catch(e){
+      var out = String(Math.round(v * 1e10) / 1e10);
+      CALC.last = raw + ' =' + (CALC.key === 'cs' || CALC.key === 'comp'
+        ? (Number.isInteger(v) && Math.abs(v) < 4294967296
+            ? '  0x' + (v >>> 0).toString(16).toUpperCase() + ' · 0b' + (v >>> 0).toString(2)
+            : '')
+        : '');
+      CALC.expr = out;
+    }catch(e2){
       CALC.last = '这个式子算不出来';
     }
   }
 
   /* 公式速查 / 错题本 */
-  function currentSubject(){
+  function currentSubjectKey(){
     var code = $('spCode').textContent;
-    for(var k in SUBJ_DATA){ if(SUBJ_DATA[k].code === code) return SUBJ_DATA[k]; }
-    return SUBJ_DATA.math;
+    for(var k in SUBJ_DATA){ if(SUBJ_DATA[k].code === code) return k; }
+    return 'math';
   }
+  function currentSubject(){ return SUBJ_DATA[currentSubjectKey()] || SUBJ_DATA.math; }
   function buildFormulas(body){
     var s = currentSubject();
     var list = s.formulas || [];
@@ -3322,8 +3438,35 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
   }
 
   /* 复习卡片 */
-  function buildReview(body){
+  /* 复习卡片 / 考点提取 都吃一份 brief：
+     优先用当前会话整理出来的；没有就给个明确入口，绝不拿演示数据冒充真实课堂 */
+  function ensureBrief(){
+    if(ST.brief && ST.brief.sums && ST.brief.sums.length) return ST.brief;
+    if(ST.lines.length){
+      ST.brief = buildBrief();
+      return ST.brief;
+    }
+    return null;
+  }
+
+  function briefOrEmpty(body, rebuild){
     var b = ensureBrief();
+    if(b) return b;
+    body.innerHTML =
+      '<div class="st-empty" style="padding:24px 4px;line-height:1.9">还没有可以分析的课堂内容。' +
+      '<br><span style="color:#63798f;font-size:12px">这两个工具吃的是「一节课的转写」：先录一节，或者先用演示数据看看效果。</span></div>' +
+      '<button class="btn-run" id="tkDemo" style="margin-top:2px">用演示数据试试</button>';
+    $('tkDemo').addEventListener('click', function(){
+      fillDemo();
+      toast('已载入演示数据');
+      rebuild(body);
+    });
+    return null;
+  }
+
+  function buildReview(body){
+    var b = briefOrEmpty(body, buildReview);
+    if(!b) return;
     var cards = [];
     b.sums.forEach(function(s, i){
       var hit = b.kws.filter(function(k){ return s.text.indexOf(k) >= 0; });
@@ -3388,7 +3531,8 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
     return out;
   }
   function buildExam(body){
-    var b = ensureBrief();
+    var b = briefOrEmpty(body, buildExam);
+    if(!b) return;
     var hits = extractExam(b.lines);
     if(!hits.length){
       body.innerHTML = '<div class="st-empty">这节课没听到「会考」「注意」这类信号句。换个录音试试。</div>';

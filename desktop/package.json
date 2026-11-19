@@ -1,7 +1,7 @@
 {
   "name": "campus-assistant",
   "productName": "CampusAssistant",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "大学生辅助器 — 课堂录音、转写、摘要、导图与复习",
   "main": "main.js",
   "author": "shanguiyao",
