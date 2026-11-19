@@ -4,6 +4,10 @@ dist/
 build/
 out/
 
+# 本地转写组件（153 MB，随 Release 发布，不进仓库）
+whisper/
+*.bin
+
 # 打包用的 Electron 运行时（约 150 MB，不进仓库）
 electron/
 *.zip

@@ -513,6 +513,19 @@
   .st-btn.stop:hover{filter:brightness(1.06)}
 
   /* ---------- 整理页 ---------- */
+  .st-busy{
+    position:absolute;inset:0;z-index:95;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:16px;background:rgba(5,10,18,.84);backdrop-filter:blur(4px);
+  }
+  .st-busy.on{display:flex}
+  .st-busy .ring{
+    width:44px;height:44px;border-radius:50%;
+    border:3px solid rgba(79,216,255,.18);border-top-color:var(--cyan);
+    animation:spin .9s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .st-busy p{font-size:13.5px;color:#cfe8ff;letter-spacing:.04em}
+  .st-busy small{font-family:var(--mono);font-size:11px;color:var(--dim)}
   .brief{position:absolute;inset:0;display:none;flex-direction:column;background:#050a12}
   .studio.show-brief .brief{display:flex}
   .studio.show-brief .st-main,.studio.show-brief .st-bar{display:none}
@@ -1309,6 +1322,12 @@
       <div class="bf-right"><svg id="bfMap" viewBox="0 0 760 520" aria-label="课堂思维导图"></svg></div>
     </div>
   </div>
+
+  <div class="st-busy" id="stBusy">
+    <div class="ring"></div>
+    <p id="stBusyText">正在本地转写…</p>
+    <small id="stBusySub">录音越长越慢，一段 10 分钟的课大约要 1–2 分钟</small>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1924,7 +1943,11 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
     rec.tick = setInterval(updateTime, 250);
     drawWave();
     var offlineMode = document.body.classList.contains('offline');
-    if(!offlineMode && startSR()){
+    var isDesktop = !!(window.desktop && window.desktop.isDesktop);
+    if(isDesktop){
+      // 桌面版走本地 Whisper：录音时不出字，结束后统一转写
+      toast('录音中 · 结束后本地转写（离线可用）');
+    }else if(!offlineMode && startSR()){
       toast('录音中 · 文字会实时出现 · 只存本机');
     }else if(offlineMode){
       toast('离线模式：只录音，不转写');
@@ -3455,6 +3478,7 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
   }
   /* 从科目页录完的课，回写到那门课的记录里；打标的地方顺便进错题本 */
   function pushRecord(b){
+    if(ST.demo){ ST.subject = null; return; }   /* 演示内容不当真，不写进科目记录 */
     if(!ST.subject || !SUBJ_DATA[ST.subject]) return;
     var s = SUBJ_DATA[ST.subject];
     s.records.unshift({
@@ -3470,12 +3494,93 @@ window.__PPTX_TPL = [{"name": "[Content_Types].xml", "text": "<?xml version='1.0
     ST.subject = null;
   }
 
+  /* ---------- 本地转写（桌面版） ---------- */
+  function showBusy(msg, sub){
+    var el = $('stBusy');
+    if(!msg){ el.classList.remove('on'); return; }
+    $('stBusyText').textContent = msg;
+    if(sub !== undefined) $('stBusySub').textContent = sub;
+    el.classList.add('on');
+  }
+
+  /* 录音是 webm/opus，Whisper 只吃 16kHz 单声道 PCM，这里在浏览器里转 */
+  async function blobToWav16k(blob){
+    var ab = await blob.arrayBuffer();
+    var AC = window.AudioContext || window.webkitAudioContext;
+    var ac = new AC();
+    var audio;
+    try{
+      audio = await ac.decodeAudioData(ab);
+    }finally{
+      try{ ac.close(); }catch(e){}
+    }
+    var rate = 16000;
+    var frames = Math.max(1, Math.ceil(audio.duration * rate));
+    var offline = new OfflineAudioContext(1, frames, rate);
+    var src = offline.createBufferSource();
+    src.buffer = audio;
+    src.connect(offline.destination);
+    src.start(0);
+    var rendered = await offline.startRendering();
+    var pcm = rendered.getChannelData(0);
+
+    var buf = new ArrayBuffer(44 + pcm.length * 2);
+    var view = new DataView(buf);
+    function wstr(off, s){ for(var i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); }
+    wstr(0, 'RIFF'); view.setUint32(4, 36 + pcm.length * 2, true); wstr(8, 'WAVE');
+    wstr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, rate, true);
+    view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    wstr(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+    var off = 44;
+    for(var i2 = 0; i2 < pcm.length; i2++){
+      var v = Math.max(-1, Math.min(1, pcm[i2]));
+      view.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7FFF, true);
+      off += 2;
+    }
+    return buf;
+  }
+
   $('stBack').addEventListener('click', function(){
     stopAll(); closeStudio();
   });
-  $('stStop').addEventListener('click', function(){
+  $('stStop').addEventListener('click', async function(){
+    var btn = this;
+    var chunks = rec.chunks.slice();
+    var isDesktop = !!(window.desktop && window.desktop.transcribe);
     stopAll();
-    if(!ST.lines.length){ toast('还没录到内容'); return; }
+
+    /* 没有实时转写、但有录音，且是桌面版 → 本地 Whisper 转写 */
+    if(!ST.lines.length && chunks.length && isDesktop){
+      btn.disabled = true;
+      btn.textContent = '转写中…';
+      showBusy('正在本地转写…');
+      try{
+        var wav = await blobToWav16k(new Blob(chunks, { type: 'audio/webm' }));
+        var res = await window.desktop.transcribe(wav);
+        if(res && res.ok){
+          res.segments.forEach(function(s){
+            ST.lines.push({ t: s.start, text: s.text, mark: false });
+          });
+          renderLines(); updateStats();
+          toast('转写完成 · ' + res.segments.length + ' 段 · ' +
+                (res.ms ? Math.round(res.ms / 1000) + ' 秒' : ''));
+        }else{
+          toast('转写失败：' + (res && res.error ? res.error : '未知错误'));
+        }
+      }catch(err){
+        toast('转写失败：' + (err && err.message ? err.message : err));
+      }finally{
+        showBusy('');
+        btn.disabled = false;
+        btn.textContent = '结束并整理';
+      }
+    }
+
+    if(!ST.lines.length){
+      toast(isDesktop ? '没录到内容，或者没识别出语音' : '还没录到内容');
+      return;
+    }
     ST.brief = buildBrief();
     pushRecord(ST.brief);
     renderBrief(ST.brief);
