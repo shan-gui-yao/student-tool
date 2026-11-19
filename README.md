@@ -120,24 +120,32 @@ python -m http.server 8080
 # 然后浏览器打开 http://localhost:8080
 ```
 
-### 方式三：打包成 Windows 桌面程序（可选）
+### 方式三：Windows 桌面程序
 
-仓库里的 `desktop/` 是 Electron 壳。因为 Electron 运行时约 150 MB，不放进仓库，需要自己下载拼装：
+**推荐直接下载** [Releases](https://github.com/shan-gui-yao/student-tool/releases/latest) 里的
+`campus-assistant-*-win-x64.zip`：解压即用，已包含 Electron 运行时和本地转写组件（约 283 MB）。
+
+想自己拼也行。仓库里的 `desktop/` 只是 Electron 壳，`whisper/` 目录因为太大（153 MB）不进仓库，
+需要从 Release 包里取：
 
 1. 从 [electron releases](https://github.com/electron/electron/releases) 或国内镜像
-   `https://registry.npmmirror.com/-/binary/electron/` 下载 `electron-vX.Y.Z-win32-x64.zip`
-2. 解压，得到 `electron.exe`、`resources/` 等文件
-3. 新建 `resources/app/`，把下面三个文件放进去：
+   `https://registry.npmmirror.com/-/binary/electron/` 下载 `electron-vX.Y.Z-win32-x64.zip`，解压
+2. 新建 `resources/app/`，放入这四个文件：
    - `desktop/package.json`
    - `desktop/main.js`
+   - `desktop/preload.js`
    - 仓库根目录的 `index.html`
+3. 把 Release 包里的 `whisper/` **整个目录**也放进 `resources/app/`
+   （缺了它就只能录音、不能转写）
 4. 删掉 `resources/default_app.asar`
 5. 把 `electron.exe` 重命名为 `CampusAssistant.exe`
 6. 双击运行
 
-> ⚠️ **两个坑**（实测踩过）：
-> 1. **exe 所在路径不能含中文**。放在含中文的目录（比如直接用项目名建的文件夹）下会静默退出，没有日志没有报错；换到纯英文目录就正常。入口可以用中文快捷方式，但目录名要英文。
-> 2. 如果环境里设了 `ELECTRON_RUN_AS_NODE=1`，`electron.exe` 会退化成普通 Node，报 `Cannot find module 'electron'`。启动前清掉这个变量。
+> ⚠️ **三个坑**（实测踩过）：
+> 1. **路径不能含中文**。Electron 放在中文目录下会静默退出；whisper.cpp 更狠，直接崩（`0xC0000409`）。
+>    入口可以用中文快捷方式，但目录名必须英文。
+> 2. `ELECTRON_RUN_AS_NODE=1` 会让 `electron.exe` 退化成普通 Node，报 `Cannot find module 'electron'`。
+> 3. 首次运行 Windows 可能提示「未知发布者」（未做代码签名），点「更多信息 → 仍要运行」。
 
 打包后的样子（窗口无菜单栏，单实例）：
 
