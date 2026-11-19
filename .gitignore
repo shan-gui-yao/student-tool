@@ -1,0 +1,21 @@
+# 依赖 / 构建产物
+node_modules/
+dist/
+build/
+out/
+
+# 打包用的 Electron 运行时（约 150 MB，不进仓库）
+electron/
+*.zip
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
